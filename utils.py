@@ -24,6 +24,7 @@ velocity_white_noise = 1e-3 * np.random.normal(mu_velocity, st_d_velocity, hpop_
 
 sim_cords = hpop_coordinates + coordinate_white_noise
 sim_velocities = hpop_velocities + velocity_white_noise
+i = 0
 
 
 def time_to_timestamp(time):
@@ -69,7 +70,8 @@ def calculate_checksum(line):
     return str(checksum % 10)
 
 
-def update_tle(line1, line2, inclination, raan, eccentricity, arg_perigee, mean_anomaly, mean_motion, epoch):
+def update_tle(line1, line2, inclination, raan, eccentricity, arg_perigee, mean_anomaly, mean_motion, epoch,
+               add_orbit=0):
     # Split the TLE lines into individual components
     tle_line1 = list(line1)
     tle_line2 = list(line2)
@@ -81,12 +83,17 @@ def update_tle(line1, line2, inclination, raan, eccentricity, arg_perigee, mean_
 
     # Update the TLE elements with the keplerian elements
     tle_line1[18:32] = epoch  # Update the epoch in YYDDD.FFFFFFF format
-    tle_line2[8:16] = '0' + f"{inclination_deg:07.4f}"  # Update the inclination in degrees
+    if inclination_deg > 100:
+        tle_line2[8:16] = f"{inclination_deg:07.4f}"
+    else:  # Update the inclination in degrees
+        tle_line2[8:16] = '0' + f"{inclination_deg:07.4f}"
     tle_line2[17:25] = f"{raan_deg:.4f}".rjust(8)  # Update the RAAN in degrees
     tle_line2[26:34] = f"{eccentricity * 1e7:.0f}".rjust(7, '0').ljust(8)  # Update the eccentricity
     tle_line2[34:43] = f"{arg_perigee_deg:.4f}".rjust(8) + ' '  # Update the argument of perigee in degrees
     tle_line2[43:52] = f"{mean_anomaly_deg:.4f}".rjust(8) + ' '  # Update the mean anomaly in degrees
-    tle_line2[52:63] = f"{mean_motion:.8f}".rjust(10)  # Update the mean motion
+    tle_line2[52:64] = f"{mean_motion:.9f}".rjust(10)  # Update the mean motion
+    orbits = int(line2[-2:])
+    # tle_line2[-2:] = f"{orbits + add_orbit:02d}"  # Update the number of orbits
     # Join the updated TLE components back into strings
     tle_line1 = ''.join(tle_line1)
     tle_line2 = ''.join(tle_line2)
@@ -200,29 +207,6 @@ def measurement_jacobian(state):
     return np.eye(6)  # Return an identity matrix since measurement model is linear
 
 
-
-def get_state_from_ukf(observations, initial_guess_pos, initial_guess_v, time_step):
-    position_covariance = np.diag([0.447 * 1e-3, 0.447 * 1e-3, 0.447 * 1e-3])
-    velocity_covariance = np.diag([0.063 * 1e-3, 0.063 * 1e-3, 0.063 * 1e-3])
-
-    points = MerweScaledSigmaPoints(6, alpha=0.1, beta=2., kappa=3)
-    kf = UnscentedKalmanFilter(dim_x=6, dim_z=6, dt=time_step, fx=motion_model, hx=measurement_model, points=points)
-    kf.x = np.hstack((initial_guess_pos, initial_guess_v))
-    # initialize the state covariance
-    kf.P = np.block([[position_covariance, np.zeros((3, 3))],
-                     [np.zeros((3, 3)), velocity_covariance]])
-    # create the process noise matrix
-    kf.Q = np.eye(6) * 0.01
-
-    # create the measurement noise matrix
-    kf.R = np.eye(6) * 0.1
-    for observation in observations:
-        kf.predict()
-        kf.update(observation)
-    kf.predict()
-    return kf.x
-
-
 def calculate_keplerian_elements(r, v):
     mu = 398600.4418
     # Calculate specific angular momentum
@@ -268,3 +252,52 @@ def calculate_keplerian_elements(r, v):
     mean_motion = np.sqrt(mu / a ** 3) * (24 * 60 * 60) / (2 * np.pi)  # revs/day
 
     return inclination, raan, eccentricity, arg_perigee, mean_anomaly, mean_motion
+
+
+import numpy as np
+from scipy.optimize import least_squares
+from skyfield.api import Topos, load, wgs84
+from skyfield.sgp4lib import EarthSatellite
+
+# Constants
+gravitational_constant = 3.986004418e14  # m^3 s^-2
+earth_radius = 6371e3  # m
+
+# Observations (made up for this example)
+observed_ranges = np.array([7000e3, 7100e3, 7200e3, 7300e3, 7400e3])  # m
+times = np.array([0, 60, 120, 180, 240])  # seconds
+
+# Initial guess (made up for this example)
+x0 = np.array([7000e3, 0, 0, 7.5e3, 0, 0])  # m and m/s
+
+
+def residuals(x):
+    # Propagate the state vector
+    propagated_ranges = np.zeros_like(observed_ranges)
+    for i, t in enumerate(times):
+        # Use a simple Keplerian propagation for this example
+        a = (x[0] + earth_radius) / (1 - 0.5 * gravitational_constant * t ** 2 / x[0] ** 3)
+        propagated_ranges[i] = a - earth_radius
+    # Calculate the residuals
+    return propagated_ranges - observed_ranges
+
+
+# Perform the least squares fit
+result = least_squares(residuals, x0)
+
+# # Assuming you have position vectors r1, r2, r3 and calculated v2
+# r1 = r1 * u.km
+# r2 = r2 * u.km
+# r3 = r3 * u.km
+# v2 = v2 * u.km / u.s
+#
+# # You can then create an Orbit object for the second observation
+# orbit2 = Orbit.from_vectors(Earth, r2, v2)
+#
+# # And then you can access the Keplerian elements of the orbit
+# a = orbit2.a  # Semi-major axis
+# ecc = orbit2.ecc  # Eccentricity
+# inc = orbit2.inc  # Inclination
+# raan = orbit2.raan  # Right ascension of ascending node
+# argp = orbit2.argp  # Argument of perigee
+# nu = orbit2.nu  # True anomaly

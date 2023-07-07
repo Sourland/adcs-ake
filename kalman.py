@@ -1,42 +1,28 @@
-from filterpy.kalman import ExtendedKalmanFilter
-from filterpy.common import Q_discrete_white_noise
 import numpy as np
-from main import hpop
+from utils import sim_cords, sim_velocities
 
-# Define past position and velocity observations until timestep n-1
-past_observations = np.array([hpop[0, :], hpop[1, :], hpop[2, :], hpop[3, :], hpop[4, :], hpop[5, :]])
+from scipy.integrate import solve_ivp
+import numpy as np
 
-dt = 1.0  # Time step
-
-# Create the EKF instance
-ekf = ExtendedKalmanFilter(dim_x=6, dim_z=6)
-
-# Set the motion model, measurement model, and measurement Jacobian functions
-ekf.f = motion_model
-ekf.h = measurement_model
-ekf.HJacobian = measurement_jacobian
-
-# Define the initial state and covariance matrix
-# Define the separate covariance matrices for position and velocity
-position_covariance = np.diag([0.447 * 1e-3, 0.447 * 1e-3, 0.447 * 1e-3])
-velocity_covariance = np.diag([0.063 * 1e-3, 0.063 * 1e-3, 0.063 * 1e-3])
-initial_state = np.array(hpop[6, :])
-initial_covariance = np.block([[position_covariance, np.zeros((3, 3))],
-                               [np.zeros((3, 3)), velocity_covariance]])
-ekf.x = initial_state
-ekf.P = initial_covariance
-
-# Define process noise covariance matrix Q
-process_noise_cov = Q_discrete_white_noise(dim=4, dt=dt, var=0.01)
-
-# Define measurement noise covariance matrix R
-measurement_noise_cov = np.eye(6) * 0.1
+mu = 398600.4418  # gravitational parameter
 
 
+# define the system of ODEs
+def eom(t, y):
+    r = np.sqrt(y[0] ** 2 + y[1] ** 2 + y[2] ** 2)
+    return [y[3], y[4], y[5], -mu * y[0] / r ** 3, -mu * y[1] / r ** 3, -mu * y[2] / r ** 3]
 
-# Predict the state at timestep n
-ekf.predict()
-# Access the estimated state at timestep n
-estimated_state = ekf.x
 
-print("Estimated state at timestep n:", estimated_state)
+# initial conditions [x0, y0, z0, vx0, vy0, vz0]
+y0 = [7000, 0, 0, 0, 7.5460491, 0]  # sample initial conditions
+
+# solve the system of ODEs
+sol = solve_ivp(eom, [0, 120], y0, method='RK45')  # solve for the next 120 minutes
+
+# print final conditions
+print(sol.y[:, -1])
+
+gps_data = np.hstack((sim_cords, sim_velocities))
+state_vector_data = gps_data[:400]
+
+print(gps_data[-1])

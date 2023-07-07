@@ -7,7 +7,7 @@ import colorednoise as cn
 from utils import time_to_timestamp
 
 # hpop = pd.read_fwf("HPOP_Sat TEMEofEpoch Position Velocity.txt")
-hpop = np.genfromtxt("hpopdate.txt", dtype=str,
+hpop = np.genfromtxt("hpopepoch.txt", dtype=str,
                      encoding=None, delimiter=",").astype(float)
 # hpop.columns = sgp4.columns
 orbital_elements = pd.read_csv("orbital_elements_hpop.csv")
